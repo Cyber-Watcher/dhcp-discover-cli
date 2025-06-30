@@ -1,0 +1,93 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & Zip Artifacts
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            ext: ''
+            zip: dhcp-discover-linux-amd64.zip
+          - goos: windows
+            goarch: amd64
+            ext: '.exe'
+            zip: dhcp-discover-windows-amd64.zip
+          - goos: darwin
+            goarch: amd64
+            ext: ''
+            zip: dhcp-discover-darwin-amd64.zip
+          - goos: darwin
+            goarch: arm64
+            ext: ''
+            zip: dhcp-discover-darwin-arm64.zip
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Tidy modules
+        run: go mod tidy
+
+      - name: Build binary for ${{ matrix.goos }}/${{ matrix.goarch }}
+        env:
+          CGO_ENABLED: 0
+        run: |
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+            go build -o dhcp-discover${{ matrix.ext }} ./cmd/dhcp-discover
+
+      - name: Zip binary
+        run: zip "${{ matrix.zip }}" dhcp-discover${{ matrix.ext }}
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.zip }}
+          path: ${{ matrix.zip }}
+
+  release:
+    name: Create or Update GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code (for tag context)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download zip artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts into workspace root
+        run: |
+          # Найти и переместить все .zip из папок artifacts/... в корень
+          find artifacts -type f -name '*.zip' -exec mv {} . \;
+
+      - name: List files for debug
+        run: ls -1 .
+
+      - name: Create or update Release and upload artifacts
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          artifacts: '*.zip'
+          overwrite: true
